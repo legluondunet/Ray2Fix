@@ -15,6 +15,11 @@ env:
 permissions:
   contents: read
 
+# Supersede obsolete builds while the experimental PR is evolving.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: windows-latest
@@ -57,6 +62,75 @@ jobs:
       # Add additional options to the MSBuild command line here (like platform or verbosity level).
       # See https://docs.microsoft.com/visualstudio/msbuild/msbuild-command-line-reference
       run: msbuild /m /p:Configuration=${{env.CONFIGURATION}} /p:Platform=${{env.PLATFORM}} ${{env.SOLUTION_PATH}}
+
+    - name: Checkout pinned GameFrame (Apache-2.0)
+      uses: actions/checkout@v4
+      with:
+        repository: tanepiper/game-frame
+        ref: f195a074a63cc150673c38becdec696163b0b3d1
+        path: third_party/game-frame
+        persist-credentials: false
+
+    - name: Install Windows x86 Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: i686-pc-windows-msvc
+
+    - name: Apply strictly scoped Ray2Fix GameFrame window and frame-timing adapter
+      shell: pwsh
+      run: |
+        python tools/gameframe/patch_ray2fix.py third_party/game-frame
+        if ($LASTEXITCODE -ne 0) { throw "GameFrame adapter failed; check pinned upstream revision" }
+
+    - name: Compile GameFrame Glide2x (native x86 MSVC)
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $manifest = (Resolve-Path 'third_party/game-frame/wrappers/Cargo.toml').Path
+        $upstreamDef = (Resolve-Path 'third_party/game-frame/wrappers/glide/glide2x.def').Path
+        # MSVC internal __stdcall symbols need a leading underscore.
+        # Keep all 156 exported Glide 2 names identical to the upstream .def.
+        $def = Join-Path $env:RUNNER_TEMP 'gameframe-glide-msvc.def'
+        $original = Get-Content -Raw $upstreamDef
+        $original = $original.Replace([string][char]13, '')
+        $converted = [regex]::Replace($original, '(?m)^(_[A-Za-z0-9_]+@[0-9]+)=([A-Za-z0-9_]+@[0-9]+)$', '$1=_$2')
+        $n = ([regex]::Matches($converted, '(?m)^_[A-Za-z0-9_]+@[0-9]+=_[A-Za-z0-9_]+@[0-9]+$')).Count
+        if ($n -ne 156) { throw "Expected 156 converted exports, found $n" }
+        Set-Content -Path $def -Value $converted -Encoding ascii
+        $env:RUSTFLAGS = "-C link-arg=/DEF:$def"
+        cargo build -p glide --release --target i686-pc-windows-msvc --manifest-path $manifest
+        if ($LASTEXITCODE -ne 0) { throw "Failed to build open-source GameFrame Glide2x" }
+
+    - name: Validate 32-bit Glide exports for Ray2Fix
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        python -m pip install --disable-pip-version-check pefile
+        if ($LASTEXITCODE -ne 0) { throw "PE inspection dependency failed" }
+        $dll = 'third_party/game-frame/wrappers/target/i686-pc-windows-msvc/release/glide2x.dll'
+        python tools/gameframe/audit_exports.py $dll third_party/game-frame/wrappers/glide/glide2x.def
+        if ($LASTEXITCODE -ne 0) { throw "GameFrame Glide ABI validation failed" }
+
+    - name: Package GameFrame instead of dgVoodoo2
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $dll = 'third_party/game-frame/wrappers/target/i686-pc-windows-msvc/release/glide2x.dll'
+        if (!(Test-Path 'Release/GliFixVf.dll') -or !(Test-Path 'Release/R2FixCfg.exe')) {
+          throw "Missing native Ray2Fix components; refusing incomplete package"
+        }
+        New-Item -ItemType Directory -Path 'Release/DLL' -Force | Out-Null
+        Copy-Item 'Release/GliFixVf.dll' 'Release/DLL/GliFixVf.dll' -Force
+        Remove-Item 'Release/GliFixVf.dll' -Force
+        Copy-Item $dll 'Release/glide2x.dll'
+        Copy-Item 'third_party/game-frame/LICENSE-APACHE' 'Release/GameFrame-LICENSE-APACHE.txt'
+        Write-Host "Open-source Glide SHA256:" (Get-FileHash 'Release/glide2x.dll' -Algorithm SHA256).Hash
+        if (Test-Path 'Release/dgVoodoo.conf') {
+          throw "dgVoodoo.conf must not be included in the new package"
+        }
+        if (Test-Path 'Release/dgVoodooCpl.exe') {
+          throw "dgVoodooCpl.exe must not be included in the new package"
+        }
 
     - name: Upload
       uses: actions/upload-artifact@v4
