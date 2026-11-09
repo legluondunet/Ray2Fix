@@ -73,7 +73,7 @@ void fn_vReadUbiIni( void )
 
 	// GLI library
 	GetPrivateProfileString("Rayman2", "GLI_Dll", NULL, szBuffer, sizeof(szBuffer), szUbiPath);
-	if ( !strcmp(szBuffer, "Ray2Fix") || !strcmp(szBuffer, "Ray2Fix") )
+	if ( !strcmp(szBuffer, "Ray2Fix") )
 	{
 		g_bFixState = g_bFixPrevState = TRUE;
 	}
