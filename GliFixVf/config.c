@@ -82,7 +82,7 @@ void fn_vReadR2Config( void )
 	// GLI library
 	GetPrivateProfileString("Rayman2", "GLI_Dll", NULL, szBuffer, sizeof(szBuffer), szUbiPath);
 
-	if ( strcmp(szBuffer, GLI_szName) != 0 && strcmp(szBuffer, "Ray2Fix") != 0 )
+	if ( strcmp(szBuffer, GLI_szName) != 0 )
 	{
 		// Ray2Fix is loaded but not enabled, set the global var to FALSE
 		// This will show a prompt in GLI_DRV_fn_lGetAllDisplayConfig.
