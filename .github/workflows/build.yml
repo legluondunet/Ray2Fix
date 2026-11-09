@@ -138,3 +138,4 @@ jobs:
         name: Ray2Fix-devel
         path: Release/
         if-no-files-found: error
+        retention-days: 30
